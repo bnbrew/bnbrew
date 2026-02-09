@@ -21,6 +21,9 @@ typechain-types/
 *.swp
 *.swo
 
+# Claude
+CLAUDE.md
+
 # OS
 *.log
 npm-debug.log*
