@@ -1,10 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 export default function Home() {
-  const [walletConnected, setWalletConnected] = useState(false);
-  const [address, setAddress] = useState('');
+  const router = useRouter();
 
   const connectWallet = async () => {
     if (typeof window.ethereum === 'undefined') {
@@ -13,36 +12,14 @@ export default function Home() {
     }
 
     try {
-      const accounts = await window.ethereum.request({
+      await window.ethereum.request({
         method: 'eth_requestAccounts',
       });
-      setAddress(accounts[0]);
-      setWalletConnected(true);
+      router.push('/build');
     } catch {
       console.error('Wallet connection failed');
     }
   };
-
-  if (walletConnected) {
-    return (
-      <div className="h-screen flex flex-col">
-        <header className="h-14 border-b border-bnb-border flex items-center justify-between px-6">
-          <div className="flex items-center gap-2">
-            <span className="text-bnb-yellow font-bold text-xl">BNBrew</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-bnb-gray font-mono">
-              {address.slice(0, 6)}...{address.slice(-4)}
-            </span>
-            <div className="w-2 h-2 rounded-full bg-bnb-success" />
-          </div>
-        </header>
-        <main className="flex-1 flex items-center justify-center text-bnb-gray">
-          <p>Chat interface loading...</p>
-        </main>
-      </div>
-    );
-  }
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center gap-8">
