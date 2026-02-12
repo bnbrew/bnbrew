@@ -11,6 +11,7 @@ export async function POST(req: NextRequest) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
+      sessionId: body.sessionId,
       messages: body.messages,
       walletAddress: body.walletAddress,
     }),

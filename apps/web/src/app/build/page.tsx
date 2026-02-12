@@ -1,21 +1,58 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
+import Link from 'next/link';
+import { Coffee } from 'lucide-react';
 import ChatPanel, { type ChatMessage } from '../../components/chat/ChatPanel';
 import PreviewPanel from '../../components/preview/PreviewPanel';
 
-interface GeneratedFile {
-  path: string;
-  content: string;
-  language: string;
+interface ContractFile {
+  name: string;
+  source: string;
+}
+
+function generateSessionId(): string {
+  return 'sess-' + crypto.randomUUID();
 }
 
 export default function BuildPage() {
+  return (
+    <Suspense>
+      <BuildPageInner />
+    </Suspense>
+  );
+}
+
+function BuildPageInner() {
+  const searchParams = useSearchParams();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [generatedFiles, setGeneratedFiles] = useState<GeneratedFile[]>([]);
-  const [previewUrl, setPreviewUrl] = useState<string>();
+  const [previewFiles, setPreviewFiles] = useState<Record<string, string>>({});
+  const [contractFiles, setContractFiles] = useState<ContractFile[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [walletAddress, setWalletAddress] = useState<string>();
+  const sessionIdRef = useRef<string>('');
+
+  useEffect(() => {
+    // Generate a stable session ID
+    sessionIdRef.current = generateSessionId();
+
+    (async () => {
+      if (typeof window.ethereum !== 'undefined') {
+        try {
+          const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+          if (accounts.length > 0) setWalletAddress(accounts[0]);
+        } catch {}
+      }
+
+      const initialPrompt = searchParams.get('prompt');
+      if (initialPrompt) {
+        handleSend(initialPrompt);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSend = async (content: string) => {
     const userMsg: ChatMessage = {
@@ -33,14 +70,18 @@ export default function BuildPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          sessionId: sessionIdRef.current,
           messages: [...messages, userMsg].map((m) => ({
             role: m.role,
             content: m.content,
           })),
+          walletAddress,
         }),
       });
 
-      if (!response.ok) throw new Error('Chat request failed');
+      if (!response.ok) {
+        throw new Error(`API returned ${response.status}`);
+      }
 
       const reader = response.body?.getReader();
       if (!reader) throw new Error('No response stream');
@@ -76,10 +117,10 @@ export default function BuildPage() {
                     m.id === assistantMsg.id ? { ...m, content: assistantContent } : m,
                   ),
                 );
-              } else if (parsed.type === 'files') {
-                setGeneratedFiles(parsed.files);
-              } else if (parsed.type === 'preview') {
-                setPreviewUrl(parsed.url);
+              } else if (parsed.type === 'preview_files') {
+                setPreviewFiles(parsed.files);
+              } else if (parsed.type === 'contract_files') {
+                setContractFiles(parsed.files);
               }
             } catch {
               // Skip malformed SSE chunks
@@ -94,7 +135,8 @@ export default function BuildPage() {
         {
           id: `msg-error-${Date.now()}`,
           role: 'assistant',
-          content: 'Something went wrong. Please try again.',
+          content:
+            'The BNBrew API is not running yet. Start it with `pnpm dev` in apps/api to enable AI generation.',
           timestamp: Date.now(),
         },
       ]);
@@ -105,20 +147,31 @@ export default function BuildPage() {
   };
 
   return (
-    <div className="h-screen flex flex-col">
+    <div className="h-screen flex flex-col bg-bnb-dark">
       {/* Header */}
       <header className="h-14 border-b border-bnb-border flex items-center justify-between px-6 shrink-0">
         <div className="flex items-center gap-3">
-          <span className="text-bnb-yellow font-bold text-xl">BNBrew</span>
+          <Link href="/" className="flex items-center gap-2">
+            <Coffee className="w-5 h-5 text-bnb-yellow" />
+            <span className="text-bnb-yellow font-bold text-lg">BNBrew</span>
+          </Link>
           <span className="text-xs text-bnb-gray px-2 py-0.5 border border-bnb-border rounded">
             Builder
           </span>
         </div>
         <div className="flex items-center gap-4">
-          {generatedFiles.length > 0 && (
-            <button className="px-4 py-1.5 bg-bnb-yellow text-bnb-dark text-sm font-semibold rounded-lg hover:bg-bnb-yellow-hover transition-colors cursor-pointer">
+          {(Object.keys(previewFiles).length > 0 || contractFiles.length > 0) && (
+            <button className="px-5 py-2 bg-bnb-yellow text-bnb-dark text-sm font-semibold rounded-full hover:bg-bnb-yellow-hover transition-colors cursor-pointer">
               Deploy
             </button>
+          )}
+          {walletAddress && (
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-bnb-card border border-bnb-border rounded-full">
+              <div className="w-2 h-2 rounded-full bg-bnb-success" />
+              <span className="text-xs text-bnb-gray font-mono">
+                {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
+              </span>
+            </div>
           )}
         </div>
       </header>
@@ -133,8 +186,8 @@ export default function BuildPage() {
         {/* Right: Preview / Code */}
         <div className="w-1/2">
           <PreviewPanel
-            files={generatedFiles}
-            previewUrl={previewUrl}
+            previewFiles={previewFiles}
+            contractFiles={contractFiles}
             isGenerating={isGenerating}
           />
         </div>

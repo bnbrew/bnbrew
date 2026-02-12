@@ -1,14 +1,25 @@
 {
-  "extends": "../../tsconfig.json",
   "compilerOptions": {
     "outDir": "./dist",
     "baseUrl": "./",
     "module": "commonjs",
     "target": "ES2022",
+    "lib": ["ES2022"],
+    "declaration": true,
+    "strict": false,
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
-    "incremental": true
+    "incremental": true,
+    "paths": {
+      "@bnbrew/shared": ["../../packages/shared/src"],
+      "@bnbrew/shared/*": ["../../packages/shared/src/*"]
+    }
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "exclude": ["node_modules", "dist", "src/deployer", "src/encryption", "src/greenfield", "src/relay", "src/pipeline", "src/compiler"]
 }
