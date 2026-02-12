@@ -3,7 +3,34 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'BNBrew — AI Onchain App Builder',
-  description: 'Build and deploy onchain apps on BNB Chain with AI. No blockchain experience needed.',
+  description:
+    'Build and deploy onchain apps on BNB Chain with AI. Describe your app, we generate smart contracts, build the frontend, and deploy everything.',
+  metadataBase: new URL('https://bnbrew.xyz'),
+  openGraph: {
+    title: 'BNBrew — Build Onchain. Ship with AI.',
+    description:
+      'Describe your app in plain English. BNBrew generates smart contracts, builds the frontend, and deploys to BNB Chain. No blockchain experience needed.',
+    siteName: 'BNBrew',
+    type: 'website',
+    locale: 'en_US',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'BNBrew — Build Onchain. Ship with AI.',
+    description:
+      'AI-powered onchain app builder for BNB Chain. Smart contracts + frontend + deploy in minutes.',
+  },
+  keywords: [
+    'BNB Chain',
+    'onchain app builder',
+    'AI',
+    'smart contracts',
+    'opBNB',
+    'Greenfield',
+    'dApp',
+    'no-code',
+    'web3',
+  ],
 };
 
 export default function RootLayout({
