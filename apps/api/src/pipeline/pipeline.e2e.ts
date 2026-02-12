@@ -5,7 +5,7 @@
  * Uses opBNB testnet and Greenfield testnet.
  */
 
-import { deployApp, PipelineResult } from './orchestrator';
+import { deployApp, type PipelineResult } from './orchestrator';
 import type { AppSpec, PipelineStatus } from '@bnbrew/shared';
 
 const TEST_APP_SPEC: AppSpec = {
@@ -16,10 +16,12 @@ const TEST_APP_SPEC: AppSpec = {
   contracts: [
     {
       name: 'ContactForm',
-      inherits: 'DataCollector',
+      description: 'A contact form contract that stores encrypted submissions',
+      inherits: 'BNBrewBase',
       functions: [
         {
           name: 'submitForm',
+          description: 'Submit a form entry with encrypted data hash',
           params: [
             { name: 'dataHash', type: 'bytes32' },
             { name: 'metadata', type: 'string' },
@@ -52,11 +54,12 @@ const TEST_APP_SPEC: AppSpec = {
           { type: 'form', props: { fields: ['name', 'email', 'message'] } },
         ],
         layout: 'single',
+        requiresAuth: false,
       },
     ],
     theme: {
       primaryColor: '#F0B90B',
-      fontFamily: 'Inter',
+      darkMode: true,
     },
     features: ['encryption', 'relay'],
   },
@@ -74,18 +77,18 @@ const TEST_APP_SPEC: AppSpec = {
 async function runE2ETest(): Promise<void> {
   console.log('=== BNBrew E2E Pipeline Test ===\n');
 
-  const privateKey = process.env.TEST_PRIVATE_KEY;
-  if (!privateKey) {
-    console.error('TEST_PRIVATE_KEY environment variable required');
-    process.exit(1);
-  }
+  const ownerAddress = process.env.TEST_OWNER_ADDRESS || '0x0000000000000000000000000000000000000000';
 
   const statusLog: Array<{ status: PipelineStatus; message: string; time: number }> = [];
   const startTime = Date.now();
 
   const result: PipelineResult = await deployApp(
-    TEST_APP_SPEC,
-    privateKey,
+    {
+      appSpec: TEST_APP_SPEC,
+      ownerAddress,
+      contractSources: [],
+      previewFiles: {},
+    },
     {
       onStatusChange: (status, message) => {
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);

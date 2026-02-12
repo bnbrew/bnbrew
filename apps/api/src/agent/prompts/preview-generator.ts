@@ -153,27 +153,111 @@ export default function App() {
 }
 \`\`\`
 
+## CONTRACT INTEGRATION
+
+The environment provides a \`useAppContract\` hook for interacting with deployed smart contracts.
+
+\`\`\`tsx
+import { useAppContract } from "/hooks/useAppContract";
+import { useWallet } from "/hooks/useWallet";
+
+// In your component:
+const { address, connect } = useWallet();
+const { submitTx, readContract, isSubmitting } = useAppContract();
+
+// ── WRITE: Form submit handler ──
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+  if (!address) { connect(); return; }
+  try {
+    await submitTx("ContractName", "functionName", [arg1, arg2]);
+    toast({ title: "Success!", description: "Transaction submitted" });
+  } catch (err: any) {
+    toast({ title: "Error", description: err.message, variant: "destructive" });
+  }
+};
+
+// ── READ: Fetch on-chain data on mount ──
+const [stats, setStats] = useState({ totalTips: "0", tipCount: "0" });
+const [loading, setLoading] = useState(true);
+
+useEffect(() => {
+  (async () => {
+    try {
+      const total = await readContract("ContractName", "totalTips");
+      const count = await readContract("ContractName", "tipCount");
+      setStats({ totalTips: total.toString(), tipCount: count.toString() });
+    } catch { /* contract may not have data yet */ }
+    setLoading(false);
+  })();
+}, []);
+\`\`\`
+
+Use \`submitTx\` for ALL form submissions that map to contract functions. Check the AppSpec contracts to know which function to call.
+Use \`readContract\` for ALL data that comes from the blockchain (stats, counters, lists, balances). Show a loading state while fetching.
+If the form data needs to be hashed (bytes32 params), hash it client-side: \`ethers.keccak256(ethers.toUtf8Bytes(data))\`.
+
+**PAYABLE FUNCTIONS (tips, payments in BNB):**
+If a contract function is marked \`payable: true\`, you MUST pass the value as a 4th argument:
+\`\`\`tsx
+await submitTx("TipJar", "sendTip", [message], { value: tipAmount });
+// tipAmount is a string in ether, e.g. "0.01" for 0.01 BNB
+\`\`\`
+Let the user enter the amount in a form field. Convert to string before passing.
+
+**ERC20 PAYMENTS (USDT/USDC):**
+For stablecoin payments, the contract uses \`transferFrom\`. The user must first approve the contract:
+\`\`\`tsx
+// 1. Approve
+await submitTx("ERC20Token", "approve", [contractAddress, amount]);
+// 2. Then call the payment function
+await submitTx("PaymentContract", "pay", [amount]);
+\`\`\`
+
+## DATA DISPLAY — CRITICAL RULE
+
+NEVER hardcode fake data for anything that would come from the smart contract (tip counts, balances, totals, recent transactions, user lists, etc.).
+Instead:
+- Use \`readContract\` in a \`useEffect\` to fetch real values on mount
+- Initialize state with zeros/empty: \`"0"\`, \`[]\`, etc.
+- Show a simple loading indicator while data loads
+- It's OK to show "0" or "No data yet" — that's honest. Fake data like "$1,247.50" or "89 tips" is NOT.
+
 ## DESIGN RULES
 
 1. **Use Tailwind classes for ALL layout and custom styling** — spacing, flex, grid, typography, etc.
 2. **Use the pre-built components** for interactive elements — don't reinvent Button, Card, Input etc.
 3. **Use semantic theme classes**: \`bg-background\`, \`text-foreground\`, \`bg-card\`, \`text-muted-foreground\`, \`bg-primary\`, \`border-border\`, etc.
-4. **Forms**: Use Label + Input/Textarea/Select. On submit, call \`toast({ title: "Success!", description: "..." })\`
-5. **Tables**: Use Table + TableHeader/Body/Row/Head/Cell with realistic mock data (3-5 rows)
-6. **Stats**: Use a grid of Cards with large numbers
+4. **Forms**: Use Label + Input/Textarea/Select. On submit, use \`useAppContract().submitTx()\` to call the contract, then \`toast()\` on success/error. If wallet not connected, call \`connect()\` first.
+5. **Tables**: Use Table + TableHeader/Body/Row/Head/Cell. Fetch data via \`readContract\`, show "No data yet" if empty.
+6. **Stats**: Use a grid of Cards. Fetch values via \`readContract\`, show "0" while loading — NEVER hardcode fake numbers.
 7. **Hero sections**: Use large text with Tailwind classes + Button for CTA. Add gradient accents with Tailwind.
-8. **Navigation**: Sticky nav with backdrop blur. Use Button variant="ghost" for nav links.
+8. **Navigation**: Sticky nav with backdrop blur. Use Button variant="ghost" for nav links. Include ConnectWallet component in the nav (rightmost).
 9. **Mobile responsive**: Use Tailwind responsive prefixes (sm:, md:, lg:)
 10. **Premium feel**: Generous padding (py-16, py-24), max-w containers, subtle borders, good typography hierarchy
 
 ## ADMIN PAGES
 
-Admin pages (requiresAuth: true) must NEVER appear in the main navigation. Add a tiny "Owner" link in the footer only.
+Admin pages (requiresAuth: true) must be wrapped with \`<RequireOwner>\`:
+\`\`\`tsx
+import { RequireOwner } from "/components/RequireOwner";
+
+// In App.tsx routing:
+{page === "admin" && <RequireOwner><Admin /></RequireOwner>}
+\`\`\`
+Admin pages must NEVER appear in the main navigation. Add a tiny "Owner" link in the footer only.
 
 ## SANDPACK RULES — MUST FOLLOW
 
 - NEVER use \`document\`, \`window.location\`, \`localStorage\`, \`ReactDOM\`
-- NEVER import from files you don't generate or that aren't in /components/ui
+- NEVER import from files you don't generate — EXCEPT from these pre-installed modules:
+  - \`/components/ui\` — UI component library
+  - \`/hooks/useAppContract\` — contract interaction hook (submitTx + readContract)
+  - \`/hooks/useWallet\` — wallet connection hook
+  - \`/components/ConnectWallet\` — wallet connect button
+  - \`/components/RequireOwner\` — owner-only gate
+  - \`lucide-react\` — icons
+  - \`ethers\` — Ethereum utilities (for hashing, encoding)
 - NEVER use \`@tailwind\` directives — they don't work here. All utilities are pre-loaded.
 - /globals.css must ONLY contain CSS variables in \`:root {}\` and optional custom styles. No @tailwind, no @import, no @layer.
 - /App.tsx must \`import "./globals.css"\` and render \`<Toaster />\`

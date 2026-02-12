@@ -26,7 +26,7 @@ export interface EncryptedPayload {
  * Derive a shared AES-256 key from ECDH shared secret using HKDF
  */
 function deriveKey(sharedSecret: Buffer): Buffer {
-  return crypto.hkdfSync('sha256', sharedSecret, Buffer.alloc(0), HKDF_INFO, 32);
+  return Buffer.from(crypto.hkdfSync('sha256', sharedSecret, Buffer.alloc(0), HKDF_INFO, 32));
 }
 
 /**

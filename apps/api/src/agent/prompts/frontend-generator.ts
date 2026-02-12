@@ -14,9 +14,16 @@ Output a JSON object where keys are file paths and values are file contents:
 ## Stack Requirements
 - React 19 + TypeScript
 - Vite 6
-- Tailwind CSS 4
+- Tailwind CSS 3.4 (NOT v4 — use postcss + autoprefixer + tailwind.config.js)
 - ethers.js v6 for contract interaction
 - No wallet requirement for end users (walletless UX via relay)
+
+## CRITICAL: Tailwind CSS Setup
+Use Tailwind v3 with PostCSS. The generated app MUST include:
+- postcss.config.js: \`module.exports = { plugins: { tailwindcss: {}, autoprefixer: {} } }\`
+- tailwind.config.js with content paths
+- src/index.css with @tailwind base/components/utilities directives
+- devDependencies: "tailwindcss": "^3.4.0", "postcss": "^8.4.0", "autoprefixer": "^10.4.0"
 
 ## Architecture
 
@@ -102,7 +109,7 @@ Contract ABIs: [{ "name": "ContactForm", "address": "0x1234...", "abi": [...] }]
     "type": "module",
     "scripts": {
       "dev": "vite",
-      "build": "tsc && vite build",
+      "build": "vite build",
       "preview": "vite preview"
     },
     "dependencies": {
@@ -115,7 +122,9 @@ Contract ABIs: [{ "name": "ContactForm", "address": "0x1234...", "abi": [...] }]
       "@vitejs/plugin-react": "^4.3.0",
       "typescript": "^5.7.0",
       "vite": "^6.0.0",
-      "tailwindcss": "^4.0.0"
+      "tailwindcss": "^3.4.0",
+      "postcss": "^8.4.0",
+      "autoprefixer": "^10.4.0"
     }
   },
   "src/App.tsx": "import { ContactPage } from './pages/Contact';\\nexport default function App() { return <ContactPage />; }",

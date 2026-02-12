@@ -90,24 +90,22 @@ export interface DeploymentConfig {
 
 export type PipelineStatus =
   | 'PENDING'
-  | 'PLANNING'
-  | 'GENERATING'
   | 'COMPILING'
   | 'DEPLOYING_CONTRACTS'
+  | 'GENERATING_FRONTEND'
   | 'UPLOADING_FRONTEND'
   | 'CONFIGURING_ACL'
-  | 'REGISTERING_NAME'
+  | 'REGISTERING'
   | 'VERIFYING'
   | 'LIVE'
   | 'FAILED';
 
 export interface DeployedApp {
   id: string;
-  appSpec: AppSpec;
-  status: PipelineStatus;
-  contractAddresses: Record<string, string>;
-  frontendUrl?: string;
-  domain?: string;
+  name: string;
+  owner: string;
+  contracts: Array<{ name: string; address: string; network: string }>;
+  frontendUrl: string;
+  publicKey?: string;
   createdAt: string;
-  updatedAt: string;
 }

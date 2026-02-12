@@ -24,7 +24,7 @@ export const GAS_CONFIG = {
 };
 
 export const GREENFIELD_CONFIG = {
-  rpc: process.env.GREENFIELD_RPC || 'https://gnfd-testnet-fullnode-tendermint-us.bnbchain.org',
-  chainId: process.env.GREENFIELD_CHAIN_ID || '5600',
-  spEndpoint: process.env.GREENFIELD_SP_ENDPOINT || '',
+  rpc: process.env.GREENFIELD_RPC || 'https://greenfield-chain.bnbchain.org',
+  chainId: process.env.GREENFIELD_CHAIN_ID || '1017',
+  spEndpoint: process.env.GREENFIELD_SP_ENDPOINT || 'https://greenfield-sp.bnbchain.org',
 };

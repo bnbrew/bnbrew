@@ -4,7 +4,7 @@ import { CONTRACT_GENERATOR_SYSTEM_PROMPT } from './prompts';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
-const TEMPLATES_DIR = path.resolve(__dirname, '../../../../contracts/templates');
+const TEMPLATES_DIR = path.resolve(process.cwd(), '../../contracts/templates');
 
 export interface GeneratedContract {
   name: string;
@@ -31,12 +31,13 @@ ${baseSource}
 
 Output ONLY the Solidity source code for ${spec.name}.sol`;
 
-  const response = await client.messages.create({
+  const stream = client.messages.stream({
     model: 'claude-sonnet-4-5-20250929',
     max_tokens: 8192,
     system: CONTRACT_GENERATOR_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userPrompt }],
   });
+  const response = await stream.finalMessage();
 
   const content = response.content[0];
   if (content.type !== 'text') {

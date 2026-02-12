@@ -59,6 +59,9 @@ export class ChatController {
           onContractFiles: (files: Array<{ name: string; source: string }>) => {
             res.write(`data: ${JSON.stringify({ type: 'contract_files', files })}\n\n`);
           },
+          onAppSpec: (appSpec: any) => {
+            res.write(`data: ${JSON.stringify({ type: 'app_spec', appSpec })}\n\n`);
+          },
           onStatus: (status: string, message: string) => {
             res.write(`data: ${JSON.stringify({ type: 'status', status, message })}\n\n`);
           },

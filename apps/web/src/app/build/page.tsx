@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { Coffee } from 'lucide-react';
 import ChatPanel, { type ChatMessage } from '../../components/chat/ChatPanel';
 import PreviewPanel from '../../components/preview/PreviewPanel';
+import DeployDialog from '../../components/deploy/DeployDialog';
 
 interface ContractFile {
   name: string;
@@ -33,6 +34,8 @@ function BuildPageInner() {
   const [streamingFiles, setStreamingFiles] = useState<Record<string, string>>({});
   const [isGenerating, setIsGenerating] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string>();
+  const [appSpec, setAppSpec] = useState<any>(null);
+  const [showDeployDialog, setShowDeployDialog] = useState(false);
   const sessionIdRef = useRef<string>('');
 
   useEffect(() => {
@@ -155,6 +158,10 @@ function BuildPageInner() {
                 case 'contract_files':
                   setContractFiles(parsed.files);
                   break;
+
+                case 'app_spec':
+                  setAppSpec(parsed.appSpec);
+                  break;
               }
             } catch {
               // Skip malformed SSE chunks
@@ -195,7 +202,10 @@ function BuildPageInner() {
         </div>
         <div className="flex items-center gap-4">
           {(Object.keys(previewFiles).length > 0 || contractFiles.length > 0) && (
-            <button className="px-5 py-2 bg-bnb-yellow text-bnb-dark text-sm font-semibold rounded-full hover:bg-bnb-yellow-hover transition-colors cursor-pointer">
+            <button
+              onClick={() => setShowDeployDialog(true)}
+              className="px-5 py-2 bg-bnb-yellow text-bnb-dark text-sm font-semibold rounded-full hover:bg-bnb-yellow-hover transition-colors cursor-pointer"
+            >
               Deploy
             </button>
           )}
@@ -228,6 +238,15 @@ function BuildPageInner() {
           />
         </div>
       </div>
+
+      <DeployDialog
+        open={showDeployDialog}
+        onClose={() => setShowDeployDialog(false)}
+        appSpec={appSpec}
+        contractFiles={contractFiles}
+        previewFiles={previewFiles}
+        walletAddress={walletAddress}
+      />
     </div>
   );
 }

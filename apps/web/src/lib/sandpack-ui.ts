@@ -15,6 +15,7 @@ export const SANDPACK_DEPENDENCIES: Record<string, string> = {
   clsx: 'latest',
   'tailwind-merge': 'latest',
   'lucide-react': 'latest',
+  ethers: '^6.13.0',
 };
 
 // ─── No custom entry file — use template default ───────────────────────────
@@ -591,6 +592,164 @@ export function Container({
   );
 }`;
 
+// ─── Wallet + Contract mocks (real implementations injected by deploy scaffold) ──
+
+const MOCK_USE_WALLET = `import React, { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
+
+interface WalletContextType {
+  address: string | null;
+  signer: null;
+  provider: null;
+  isConnecting: boolean;
+  isOwner: boolean;
+  connect: () => Promise<void>;
+  disconnect: () => void;
+}
+
+const WalletContext = createContext<WalletContextType>({
+  address: null, signer: null, provider: null,
+  isConnecting: false, isOwner: false,
+  connect: async () => {}, disconnect: () => {},
+});
+
+export function WalletProvider({ ownerAddress, children }: { ownerAddress?: string; children: ReactNode }) {
+  const [address, setAddress] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+
+  const connect = useCallback(async () => {
+    setIsConnecting(true);
+    await new Promise(r => setTimeout(r, 800));
+    const mock = '0x' + 'f'.repeat(40);
+    setAddress(mock);
+    setIsConnecting(false);
+  }, []);
+
+  const disconnect = useCallback(() => setAddress(null), []);
+  const isOwner = !!address;
+
+  return (
+    <WalletContext.Provider value={{ address, signer: null, provider: null, isConnecting, isOwner, connect, disconnect }}>
+      {children}
+    </WalletContext.Provider>
+  );
+}
+
+export function useWallet() {
+  return useContext(WalletContext);
+}`;
+
+const MOCK_USE_APP_CONTRACT = `import { useState, useCallback } from 'react';
+import { useWallet } from '/hooks/useWallet';
+
+export function useAppContract() {
+  const { address, connect } = useWallet();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const submitTx = useCallback(async (
+    contractName: string,
+    functionName: string,
+    args: any[] = [],
+    options?: { value?: string }
+  ): Promise<string> => {
+    if (!address) { connect(); throw new Error('Wallet not connected'); }
+    setIsSubmitting(true);
+    // Simulate transaction in preview
+    await new Promise(r => setTimeout(r, 1500));
+    setIsSubmitting(false);
+    return '0x' + Math.random().toString(16).slice(2, 66).padEnd(64, '0');
+  }, [address, connect]);
+
+  const readContract = useCallback(async (
+    contractName: string,
+    functionName: string,
+    args?: any[]
+  ): Promise<any> => {
+    // Simulate read delay
+    await new Promise(r => setTimeout(r, 300));
+    // Return sensible defaults for common patterns
+    if (functionName.includes('count') || functionName.includes('Count')) return BigInt(0);
+    if (functionName.includes('total') || functionName.includes('Total')) return BigInt(0);
+    if (functionName.includes('balance') || functionName.includes('Balance')) return BigInt(0);
+    if (functionName.includes('get') && functionName.includes('All')) return [];
+    if (functionName.includes('owner')) return '0x' + '0'.repeat(40);
+    return BigInt(0);
+  }, []);
+
+  return { submitTx, readContract, isSubmitting };
+}`;
+
+const MOCK_CONNECT_WALLET = `import React from 'react';
+import { useWallet } from '/hooks/useWallet';
+import { Button } from '/components/ui';
+import { Wallet } from 'lucide-react';
+
+export function ConnectWallet() {
+  const { address, isConnecting, connect, disconnect } = useWallet();
+
+  if (address) {
+    return (
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 rounded-md border border-border bg-secondary px-3 py-1.5 text-sm">
+          <div className="h-2 w-2 rounded-full bg-green-500" />
+          {address.slice(0, 6)}...{address.slice(-4)}
+        </div>
+        <Button variant="ghost" size="sm" onClick={disconnect}>
+          Disconnect
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <Button size="sm" onClick={connect} disabled={isConnecting} className="gap-2">
+      <Wallet className="h-4 w-4" />
+      {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+    </Button>
+  );
+}`;
+
+const MOCK_REQUIRE_OWNER = `import React from 'react';
+import { useWallet } from '/hooks/useWallet';
+import { Button, Card, CardContent } from '/components/ui';
+import { ShieldX, Wallet } from 'lucide-react';
+
+export function RequireOwner({ children }: { children: React.ReactNode }) {
+  const { address, isOwner, connect, isConnecting } = useWallet();
+
+  if (!address) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px] p-8">
+        <Card className="max-w-md w-full">
+          <CardContent className="flex flex-col items-center gap-4 p-8 text-center">
+            <Wallet className="h-12 w-12 text-muted-foreground" />
+            <h2 className="text-xl font-semibold">Connect Your Wallet</h2>
+            <p className="text-muted-foreground">This page requires owner authentication.</p>
+            <Button onClick={connect} disabled={isConnecting}>
+              {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (!isOwner) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px] p-8">
+        <Card className="max-w-md w-full">
+          <CardContent className="flex flex-col items-center gap-4 p-8 text-center">
+            <ShieldX className="h-12 w-12 text-destructive" />
+            <h2 className="text-xl font-semibold">Access Denied</h2>
+            <p className="text-muted-foreground">Only the app owner can access this page.</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+}`;
+
 // ─── Barrel export ──────────────────────────────────────────────────────────
 
 const BARREL = `export { Button, buttonVariants } from "./button";
@@ -659,4 +818,9 @@ export const SANDPACK_UI_FILES: Record<string, { code: string; hidden: boolean }
   '/components/ui/select.tsx': { code: SELECT, hidden: true },
   '/components/ui/container.tsx': { code: CONTAINER, hidden: true },
   '/components/ui/index.tsx': { code: BARREL, hidden: true },
+  // Wallet + contract mocks (replaced by real implementations in deploy scaffold)
+  '/hooks/useWallet.tsx': { code: MOCK_USE_WALLET, hidden: true },
+  '/hooks/useAppContract.ts': { code: MOCK_USE_APP_CONTRACT, hidden: true },
+  '/components/ConnectWallet.tsx': { code: MOCK_CONNECT_WALLET, hidden: true },
+  '/components/RequireOwner.tsx': { code: MOCK_REQUIRE_OWNER, hidden: true },
 };

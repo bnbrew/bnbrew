@@ -1,10 +1,6 @@
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import * as fs from 'fs/promises';
+import * as solc from 'solc';
+import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
-
-const execAsync = promisify(exec);
 
 export interface CompilationResult {
   success: boolean;
@@ -20,63 +16,53 @@ export interface CompiledContract {
   deployedBytecode: string;
 }
 
-const OZ_REMAPPINGS = [
-  '@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/',
-  '@openzeppelin/contracts-upgradeable/=node_modules/@openzeppelin/contracts-upgradeable/',
-];
+const CONTRACTS_DIR = path.resolve(process.cwd(), '../../contracts');
 
 export async function compileSolidity(
   sources: Record<string, string>,
-  basePath?: string,
 ): Promise<CompilationResult> {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'bnbrew-compile-'));
+  const input = {
+    language: 'Solidity',
+    sources: Object.fromEntries(
+      Object.entries(sources).map(([name, content]) => [
+        name,
+        { content },
+      ]),
+    ),
+    settings: {
+      optimizer: { enabled: true, runs: 200 },
+      outputSelection: {
+        '*': {
+          '*': ['abi', 'evm.bytecode.object', 'evm.deployedBytecode.object'],
+        },
+      },
+    },
+  };
 
-  try {
-    // Write source files to temp directory
-    for (const [filename, content] of Object.entries(sources)) {
-      const filePath = path.join(tmpDir, filename);
-      await fs.mkdir(path.dirname(filePath), { recursive: true });
-      await fs.writeFile(filePath, content);
+  // Import callback resolves @openzeppelin imports from contracts/node_modules
+  function findImports(importPath: string): { contents: string } | { error: string } {
+    const searchPaths = [
+      path.join(CONTRACTS_DIR, 'node_modules', importPath),
+      path.join(CONTRACTS_DIR, importPath),
+    ];
+
+    for (const fullPath of searchPaths) {
+      try {
+        const contents = fs.readFileSync(fullPath, 'utf-8');
+        return { contents };
+      } catch {
+        // try next path
+      }
     }
 
-    // Build solc input JSON
-    const input = {
-      language: 'Solidity',
-      sources: Object.fromEntries(
-        Object.entries(sources).map(([name, content]) => [
-          name,
-          { content },
-        ]),
-      ),
-      settings: {
-        optimizer: { enabled: true, runs: 200 },
-        outputSelection: {
-          '*': {
-            '*': ['abi', 'evm.bytecode.object', 'evm.deployedBytecode.object'],
-          },
-        },
-        remappings: OZ_REMAPPINGS,
-      },
-    };
-
-    const inputPath = path.join(tmpDir, 'input.json');
-    await fs.writeFile(inputPath, JSON.stringify(input));
-
-    // Run solc
-    const projectRoot = basePath || process.cwd();
-    const { stdout } = await execAsync(
-      `npx solcjs --standard-json < "${inputPath}"`,
-      {
-        cwd: projectRoot,
-        maxBuffer: 10 * 1024 * 1024,
-      },
-    );
-
-    const output = JSON.parse(stdout);
-    return parseCompilerOutput(output);
-  } finally {
-    await fs.rm(tmpDir, { recursive: true, force: true });
+    return { error: `File not found: ${importPath}` };
   }
+
+  const output = JSON.parse(
+    solc.compile(JSON.stringify(input), { import: findImports }),
+  );
+
+  return parseCompilerOutput(output);
 }
 
 function parseCompilerOutput(output: Record<string, unknown>): CompilationResult {

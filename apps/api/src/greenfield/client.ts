@@ -26,16 +26,43 @@ export interface UploadResult {
   contentHash: string;
 }
 
-export function getSpEndpoint(): string {
-  const endpoint = GREENFIELD_CONFIG.spEndpoint;
-  if (!endpoint) {
-    throw new Error('GREENFIELD_SP_ENDPOINT not configured');
+export interface SpInfo {
+  operatorAddress: string;
+  endpoint: string;
+}
+
+let cachedSp: SpInfo | null = null;
+
+export async function getPrimarySp(): Promise<SpInfo> {
+  if (cachedSp) return cachedSp;
+
+  const client = getGreenfieldClient();
+  const spList = await client.sp.getStorageProviders();
+  const activeSps = spList.filter(
+    (sp: any) => sp.endpoint && sp.operatorAddress,
+  );
+
+  if (activeSps.length === 0) {
+    throw new Error('No active storage providers found on Greenfield');
   }
-  return endpoint;
+
+  // Use configured endpoint if it matches an SP, otherwise pick first
+  const configured = GREENFIELD_CONFIG.spEndpoint;
+  const match = configured
+    ? activeSps.find((sp: any) => sp.endpoint.includes(configured) || configured.includes(sp.endpoint))
+    : null;
+
+  const sp = match || activeSps[0];
+  cachedSp = {
+    operatorAddress: sp.operatorAddress,
+    endpoint: sp.endpoint.replace(/\/$/, ''),
+  };
+
+  console.log(`Using SP: ${cachedSp.endpoint} (${cachedSp.operatorAddress})`);
+  return cachedSp;
 }
 
 export function getBucketName(appId: string, type: 'public' | 'data'): string {
-  // Greenfield bucket names: lowercase, 3-63 chars, no consecutive hyphens
   const sanitized = appId.toLowerCase().replace(/[^a-z0-9-]/g, '-');
   return `${sanitized}-${type}`;
 }

@@ -1,11 +1,19 @@
 import * as crypto from 'crypto';
 import { ethers } from 'ethers';
+import { VisibilityType, RedundancyType } from '@bnb-chain/greenfield-cosmos-types/greenfield/storage/common';
+import { Effect, ActionType, PrincipalType } from '@bnb-chain/greenfield-cosmos-types/greenfield/permission/common';
+import { ReedSolomon } from '@bnb-chain/reed-solomon';
+import Long from 'long';
 import {
   getGreenfieldClient,
-  getSpEndpoint,
+  getPrimarySp,
   getBucketName,
-  type UploadResult,
 } from './client';
+import type { UploadResult } from './client';
+
+function bytesFromBase64(b64: string): Uint8Array {
+  return new Uint8Array(Buffer.from(b64, 'base64'));
+}
 
 export interface ACLEntry {
   address: string;
@@ -19,28 +27,40 @@ export async function createPrivateBucket(
   const client = getGreenfieldClient();
   const wallet = new ethers.Wallet(privateKey);
   const bucketName = getBucketName(appId, 'data');
-  const spEndpoint = getSpEndpoint();
+  const sp = await getPrimarySp();
 
   console.log(`Creating private bucket: ${bucketName}`);
 
-  const createBucketTx = await client.bucket.createBucket({
-    bucketName,
-    creator: wallet.address,
-    visibility: 'VISIBILITY_TYPE_PRIVATE',
-    chargedReadQuota: '0',
-    primarySpAddress: spEndpoint,
-    paymentAddress: wallet.address,
-  });
+  try {
+    const createBucketTx = await client.bucket.createBucket({
+      bucketName,
+      creator: wallet.address,
+      visibility: VisibilityType.VISIBILITY_TYPE_PRIVATE,
+      chargedReadQuota: Long.fromNumber(0),
+      primarySpAddress: sp.operatorAddress,
+      paymentAddress: wallet.address,
+    });
 
-  const txResponse = await createBucketTx.broadcast({
-    denom: 'BNB',
-    gasLimit: 2000000,
-    gasPrice: '5000000000',
-    payer: wallet.address,
-    granter: '',
-  });
+    const simulateInfo = await createBucketTx.simulate({ denom: 'BNB' });
 
-  console.log(`  Private bucket created: ${bucketName} (tx: ${txResponse.transactionHash})`);
+    const txResponse = await createBucketTx.broadcast({
+      denom: 'BNB',
+      gasLimit: Number(simulateInfo?.gasLimit),
+      gasPrice: simulateInfo?.gasPrice || '5000000000',
+      payer: wallet.address,
+      granter: '',
+      privateKey: `0x${privateKey.replace(/^0x/, '')}`,
+    });
+
+    console.log(`  Private bucket created: ${bucketName} (tx: ${txResponse.transactionHash})`);
+  } catch (err: any) {
+    if (err.message?.includes('already exists')) {
+      console.log(`  Private bucket already exists: ${bucketName}`);
+    } else {
+      throw err;
+    }
+  }
+
   return bucketName;
 }
 
@@ -55,15 +75,15 @@ export async function setObjectACL(
   const bucketName = getBucketName(appId, 'data');
 
   const statements = acl.map((entry) => {
-    const actions: string[] = [];
+    const actions: ActionType[] = [];
     if (entry.permissions.includes('read')) {
-      actions.push('ACTION_GET_OBJECT');
+      actions.push(ActionType.ACTION_GET_OBJECT);
     }
     if (entry.permissions.includes('write')) {
-      actions.push('ACTION_CREATE_OBJECT');
+      actions.push(ActionType.ACTION_CREATE_OBJECT);
     }
     return {
-      effect: 'EFFECT_ALLOW' as const,
+      effect: Effect.EFFECT_ALLOW,
       actions,
       resources: [`grn:o::${bucketName}/${objectName}`],
     };
@@ -73,17 +93,20 @@ export async function setObjectACL(
     operator: wallet.address,
     statements,
     principal: {
-      type: 'PRINCIPAL_TYPE_GNFD_ACCOUNT',
+      type: PrincipalType.PRINCIPAL_TYPE_GNFD_ACCOUNT,
       value: acl[0].address,
     },
   });
 
+  const aclSimInfo = await putPolicyTx.simulate({ denom: 'BNB' });
+
   const txResponse = await putPolicyTx.broadcast({
     denom: 'BNB',
-    gasLimit: 2000000,
-    gasPrice: '5000000000',
+    gasLimit: Number(aclSimInfo?.gasLimit),
+    gasPrice: aclSimInfo?.gasPrice || '5000000000',
     payer: wallet.address,
     granter: '',
+    privateKey: `0x${privateKey.replace(/^0x/, '')}`,
   });
 
   console.log(`  ACL updated for ${objectName} (tx: ${txResponse.transactionHash})`);
@@ -101,34 +124,44 @@ export async function uploadEncryptedData(
   const bucketName = getBucketName(appId, 'data');
   const contentHash = crypto.createHash('sha256').update(encryptedData).digest('hex');
 
+  const hexKey = `0x${privateKey.replace(/^0x/, '')}`;
+  const rs = new ReedSolomon();
   console.log(`  Uploading encrypted: ${objectName} (${encryptedData.length} bytes)`);
+
+  const expectCheckSums = rs.encode(new Uint8Array(encryptedData));
 
   const createObjectTx = await client.object.createObject({
     bucketName,
     objectName,
     creator: wallet.address,
-    visibility: 'VISIBILITY_TYPE_PRIVATE',
+    visibility: VisibilityType.VISIBILITY_TYPE_PRIVATE,
     contentType: 'application/octet-stream',
-    redundancyType: 'REDUNDANCY_EC_TYPE',
-    payloadSize: BigInt(encryptedData.length),
+    redundancyType: RedundancyType.REDUNDANCY_EC_TYPE,
+    payloadSize: Long.fromNumber(encryptedData.length),
+    expectChecksums: expectCheckSums.map((hash: string) => bytesFromBase64(hash)),
   });
+
+  const simInfo = await createObjectTx.simulate({ denom: 'BNB' });
 
   const txResponse = await createObjectTx.broadcast({
     denom: 'BNB',
-    gasLimit: 2000000,
-    gasPrice: '5000000000',
+    gasLimit: Number(simInfo?.gasLimit),
+    gasPrice: simInfo?.gasPrice || '5000000000',
     payer: wallet.address,
     granter: '',
+    privateKey: hexKey,
   });
+
+  const file = new File([new Uint8Array(encryptedData)], objectName, { type: 'application/octet-stream' });
 
   await client.object.uploadObject(
     {
       bucketName,
       objectName,
-      body: encryptedData,
+      body: file,
       txnHash: txResponse.transactionHash,
     },
-    { type: 'ECDSA', privateKey },
+    { type: 'ECDSA', privateKey: hexKey },
   );
 
   return {
@@ -155,7 +188,7 @@ export async function downloadEncryptedData(
   );
 
   const chunks: Buffer[] = [];
-  const reader = (response.body as ReadableStream).getReader();
+  const reader = (response.body as unknown as ReadableStream).getReader();
 
   let done = false;
   while (!done) {
@@ -179,36 +212,39 @@ export async function grantBucketAccess(
   const wallet = new ethers.Wallet(privateKey);
   const bucketName = getBucketName(appId, 'data');
 
-  const actions: string[] = [];
+  const actions: ActionType[] = [];
   if (permissions.includes('read')) {
-    actions.push('ACTION_GET_OBJECT');
-    actions.push('ACTION_LIST_OBJECT');
+    actions.push(ActionType.ACTION_GET_OBJECT);
+    actions.push(ActionType.ACTION_LIST_OBJECT);
   }
   if (permissions.includes('write')) {
-    actions.push('ACTION_CREATE_OBJECT');
+    actions.push(ActionType.ACTION_CREATE_OBJECT);
   }
 
   const putPolicyTx = await client.bucket.putBucketPolicy(bucketName, {
     operator: wallet.address,
     statements: [
       {
-        effect: 'EFFECT_ALLOW' as const,
+        effect: Effect.EFFECT_ALLOW,
         actions,
         resources: [`grn:o::${bucketName}/*`],
       },
     ],
     principal: {
-      type: 'PRINCIPAL_TYPE_GNFD_ACCOUNT',
+      type: PrincipalType.PRINCIPAL_TYPE_GNFD_ACCOUNT,
       value: granteeAddress,
     },
   });
 
+  const policySimInfo = await putPolicyTx.simulate({ denom: 'BNB' });
+
   const txResponse = await putPolicyTx.broadcast({
     denom: 'BNB',
-    gasLimit: 2000000,
-    gasPrice: '5000000000',
+    gasLimit: Number(policySimInfo?.gasLimit),
+    gasPrice: policySimInfo?.gasPrice || '5000000000',
     payer: wallet.address,
     granter: '',
+    privateKey: `0x${privateKey.replace(/^0x/, '')}`,
   });
 
   console.log(`  Bucket access granted to ${granteeAddress} (tx: ${txResponse.transactionHash})`);

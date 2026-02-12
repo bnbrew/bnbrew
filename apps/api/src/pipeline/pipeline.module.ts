@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
 import { PipelineController } from './pipeline.controller';
-import { RelayModule } from '../relay/relay.module';
+import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
-  imports: [RelayModule],
+  imports: [PrismaModule],
   controllers: [PipelineController],
 })
 export class PipelineModule {}

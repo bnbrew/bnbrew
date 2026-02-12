@@ -23,6 +23,7 @@ export interface StreamCallbacks {
   onFileComplete: (path: string) => void;
   onPreviewReady: (files: Record<string, string>) => void;
   onContractFiles: (files: Array<{ name: string; source: string }>) => void;
+  onAppSpec: (appSpec: any) => void;
   onStatus: (status: string, message: string) => void;
   onDone: () => void;
   onError: (error: string) => void;
@@ -182,6 +183,7 @@ export class ChatService {
       return;
     }
 
+    callbacks.onAppSpec(appSpec);
     callbacks.onText(`**${appSpec.name}** — ${appSpec.description}\n\n`);
     callbacks.onStatus('generating', 'Generating code...');
     callbacks.onText('Generating smart contracts and building your preview in parallel...\n\n');

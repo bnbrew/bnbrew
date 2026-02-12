@@ -30,12 +30,15 @@ export async function generateFrontend(
     .replace('{{ownerAddress}}', appSpec.owner)
     .replace('{{relayEndpoint}}', relayEndpoint);
 
-  const response = await client.messages.create({
+  // Use streaming to avoid timeout on long generations
+  const stream = client.messages.stream({
     model: 'claude-sonnet-4-5-20250929',
-    max_tokens: 16384,
+    max_tokens: 32768,
     system: FRONTEND_GENERATOR_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userPrompt }],
   });
+
+  const response = await stream.finalMessage();
 
   const content = response.content[0];
   if (content.type !== 'text') {
@@ -49,12 +52,39 @@ export async function generateFrontend(
     text = text.replace(/^```\w*\n/, '').replace(/\n```$/, '');
   }
 
-  const files = JSON.parse(text) as Record<string, string>;
+  // If response was truncated (stop_reason=max_tokens), try to repair JSON
+  let files: Record<string, string>;
+  try {
+    files = JSON.parse(text) as Record<string, string>;
+  } catch {
+    console.warn('JSON parse failed, attempting repair...');
+    files = repairTruncatedJson(text);
+  }
 
   // Ensure critical files exist
   validateFrontendFiles(files);
 
   return { files };
+}
+
+/**
+ * Attempt to repair truncated JSON from LLM output.
+ * The JSON is a Record<string, string> so we find the last complete key-value pair.
+ */
+function repairTruncatedJson(text: string): Record<string, string> {
+  // Find the last complete "key": "value" entry by looking for the last complete string value
+  // Pattern: the text ends mid-value, so find the last `",\n  "` or `"\n}` boundary
+  const lastCompleteEntry = text.lastIndexOf('",\n');
+  if (lastCompleteEntry === -1) {
+    throw new Error('Cannot repair truncated JSON: no complete entries found');
+  }
+
+  const repaired = text.substring(0, lastCompleteEntry + 1) + '\n}';
+  try {
+    return JSON.parse(repaired) as Record<string, string>;
+  } catch {
+    throw new Error('Cannot repair truncated JSON');
+  }
 }
 
 function validateFrontendFiles(files: Record<string, string>): void {
@@ -91,7 +121,7 @@ export async function buildFrontend(
   await execAsync('pnpm install --no-frozen-lockfile', { cwd: workDir });
 
   console.log('Building frontend...');
-  await execAsync('npx vite build', { cwd: workDir });
+  await execAsync('npx vite build', { cwd: workDir, timeout: 60_000 });
 
   const distDir = path.join(workDir, 'dist');
   console.log(`Build output: ${distDir}`);

@@ -1,4 +1,5 @@
-import type { PipelineStatus, DeployedApp, UploadResult } from '@bnbrew/shared';
+import type { PipelineStatus, DeployedApp } from '@bnbrew/shared';
+import type { UploadResult } from '../greenfield/client';
 
 export interface DeployedContract {
   name: string;

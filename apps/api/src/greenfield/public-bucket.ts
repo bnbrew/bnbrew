@@ -2,9 +2,12 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { ethers } from 'ethers';
+import { VisibilityType, RedundancyType } from '@bnb-chain/greenfield-cosmos-types/greenfield/storage/common';
+import { ReedSolomon } from '@bnb-chain/reed-solomon';
+import Long from 'long';
 import {
   getGreenfieldClient,
-  getSpEndpoint,
+  getPrimarySp,
   getBucketName,
   type UploadResult,
 } from './client';
@@ -22,6 +25,10 @@ const CONTENT_TYPES: Record<string, string> = {
   '.map': 'application/json',
 };
 
+function bytesFromBase64(b64: string): Uint8Array {
+  return new Uint8Array(Buffer.from(b64, 'base64'));
+}
+
 function getContentType(filename: string): string {
   const ext = path.extname(filename).toLowerCase();
   return CONTENT_TYPES[ext] || 'application/octet-stream';
@@ -34,28 +41,40 @@ export async function createPublicBucket(
   const client = getGreenfieldClient();
   const wallet = new ethers.Wallet(privateKey);
   const bucketName = getBucketName(appId, 'public');
-  const spEndpoint = getSpEndpoint();
+  const sp = await getPrimarySp();
 
   console.log(`Creating public bucket: ${bucketName}`);
 
-  const createBucketTx = await client.bucket.createBucket({
-    bucketName,
-    creator: wallet.address,
-    visibility: 'VISIBILITY_TYPE_PUBLIC_READ',
-    chargedReadQuota: '0',
-    primarySpAddress: spEndpoint,
-    paymentAddress: wallet.address,
-  });
+  try {
+    const createBucketTx = await client.bucket.createBucket({
+      bucketName,
+      creator: wallet.address,
+      visibility: VisibilityType.VISIBILITY_TYPE_PUBLIC_READ,
+      chargedReadQuota: Long.fromNumber(0),
+      primarySpAddress: sp.operatorAddress,
+      paymentAddress: wallet.address,
+    });
 
-  const txResponse = await createBucketTx.broadcast({
-    denom: 'BNB',
-    gasLimit: 2000000,
-    gasPrice: '5000000000',
-    payer: wallet.address,
-    granter: '',
-  });
+    const simulateInfo = await createBucketTx.simulate({ denom: 'BNB' });
 
-  console.log(`  Bucket created: ${bucketName} (tx: ${txResponse.transactionHash})`);
+    const txResponse = await createBucketTx.broadcast({
+      denom: 'BNB',
+      gasLimit: Number(simulateInfo?.gasLimit),
+      gasPrice: simulateInfo?.gasPrice || '5000000000',
+      payer: wallet.address,
+      granter: '',
+      privateKey: `0x${privateKey.replace(/^0x/, '')}`,
+    });
+
+    console.log(`  Bucket created: ${bucketName} (tx: ${txResponse.transactionHash})`);
+  } catch (err: any) {
+    if (err.message?.includes('already exists')) {
+      console.log(`  Bucket already exists: ${bucketName}`);
+    } else {
+      throw err;
+    }
+  }
+
   return bucketName;
 }
 
@@ -74,6 +93,9 @@ export async function uploadDistToBucket(
 
   console.log(`Uploading ${files.length} files to ${bucketName}...`);
 
+  const hexKey = `0x${privateKey.replace(/^0x/, '')}`;
+  const rs = new ReedSolomon();
+
   for (const filePath of files) {
     const relativePath = path.relative(distDir, filePath);
     const objectName = relativePath.replace(/\\/g, '/');
@@ -83,34 +105,52 @@ export async function uploadDistToBucket(
 
     console.log(`  Uploading: ${objectName} (${contentType}, ${content.length} bytes)`);
 
+    // Compute 7 EC checksums via Reed-Solomon (required by Greenfield)
+    const expectCheckSums = rs.encode(new Uint8Array(content));
+
     const createObjectTx = await client.object.createObject({
       bucketName,
       objectName,
       creator: wallet.address,
-      visibility: 'VISIBILITY_TYPE_INHERIT',
+      visibility: VisibilityType.VISIBILITY_TYPE_INHERIT,
       contentType,
-      redundancyType: 'REDUNDANCY_EC_TYPE',
-      payloadSize: BigInt(content.length),
+      redundancyType: RedundancyType.REDUNDANCY_EC_TYPE,
+      payloadSize: Long.fromNumber(content.length),
+      expectChecksums: expectCheckSums.map((hash: string) =>
+        bytesFromBase64(hash),
+      ),
     });
+
+    const simInfo = await createObjectTx.simulate({ denom: 'BNB' });
 
     const txResponse = await createObjectTx.broadcast({
       denom: 'BNB',
-      gasLimit: 2000000,
-      gasPrice: '5000000000',
+      gasLimit: Number(simInfo?.gasLimit),
+      gasPrice: simInfo?.gasPrice || '5000000000',
       payer: wallet.address,
       granter: '',
+      privateKey: hexKey,
     });
+
+    console.log(`    Object created on-chain (tx: ${txResponse.transactionHash})`);
 
     // Upload content to SP
     await client.object.uploadObject(
       {
         bucketName,
         objectName,
-        body: content,
+        body: {
+          name: objectName,
+          type: contentType,
+          size: content.length,
+          content,
+        } as any,
         txnHash: txResponse.transactionHash,
       },
-      { type: 'ECDSA', privateKey },
+      { type: 'ECDSA', privateKey: hexKey },
     );
+
+    console.log(`    Uploaded to SP`);
 
     results.push({
       objectName,
@@ -123,13 +163,13 @@ export async function uploadDistToBucket(
   return results;
 }
 
-export function getPublicUrl(appId: string, objectName?: string): string {
+export async function getPublicUrl(appId: string, objectName?: string): Promise<string> {
   const bucketName = getBucketName(appId, 'public');
-  const spEndpoint = getSpEndpoint();
+  const sp = await getPrimarySp();
   if (objectName) {
-    return `${spEndpoint}/view/${bucketName}/${objectName}`;
+    return `${sp.endpoint}/view/${bucketName}/${objectName}`;
   }
-  return `${spEndpoint}/view/${bucketName}/index.html`;
+  return `${sp.endpoint}/view/${bucketName}/index.html`;
 }
 
 async function listFilesRecursive(dir: string): Promise<string[]> {

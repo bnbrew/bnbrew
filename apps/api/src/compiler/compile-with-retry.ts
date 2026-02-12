@@ -8,7 +8,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 
 const MAX_RETRIES = 3;
-const TEMPLATES_DIR = path.resolve(__dirname, '../../../../contracts/templates');
+const TEMPLATES_DIR = path.resolve(process.cwd(), '../../contracts/templates');
 
 export interface CompileResult {
   success: boolean;
@@ -57,7 +57,7 @@ export async function compileContractWithRetry(
     };
 
     // Compile
-    const result: CompilationResult = await compileSolidity(sources, basePath);
+    const result: CompilationResult = await compileSolidity(sources);
 
     if (result.success) {
       const appContract = result.contracts.find((c) => c.name === spec.name);
@@ -112,12 +112,13 @@ ${formatCompilerErrors(errors)}
 
 Output ONLY the corrected Solidity source code. No explanations.`;
 
-  const response = await client.messages.create({
+  const stream = client.messages.stream({
     model: 'claude-sonnet-4-5-20250929',
     max_tokens: 8192,
     system: CONTRACT_GENERATOR_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userPrompt }],
   });
+  const response = await stream.finalMessage();
 
   const content = response.content[0];
   if (content.type !== 'text') {
