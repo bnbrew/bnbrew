@@ -78,26 +78,8 @@ export default function Home() {
                 <span className="text-bnb-light">Ship with AI.</span>
               </h1>
 
-              <p className="mt-6 text-lg text-bnb-gray max-w-xl mx-auto leading-relaxed">
-                Describe your app in plain English. BNBrew generates smart contracts,
-                builds the frontend, and deploys everything to <span className="text-bnb-yellow">BNB Chain</span>.
-              </p>
-
-              {/* CTA Button */}
-              <div className="mt-10">
-                <button
-                  onClick={connectWallet}
-                  className="inline-flex items-center gap-2 px-8 py-4 bg-bnb-yellow text-bnb-dark font-semibold rounded-xl hover:bg-bnb-yellow-hover transition-all cursor-pointer text-lg"
-                >
-                  Start Building
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 17L17 7M17 7H7M17 7v10" />
-                  </svg>
-                </button>
-              </div>
-
               {/* Prompt Bar */}
-              <div className="mt-12 max-w-2xl mx-auto">
+              <div className="mt-10 max-w-2xl mx-auto">
                 <div className="flex items-center gap-2 bg-bnb-card/80 border border-bnb-border rounded-full pl-6 pr-2 py-2 backdrop-blur-sm">
                   <input
                     type="text"
@@ -118,6 +100,11 @@ export default function Home() {
                   </button>
                 </div>
               </div>
+
+              <p className="mt-6 text-lg text-bnb-gray max-w-xl mx-auto leading-relaxed">
+                Describe your app in plain English. BNBrew generates smart contracts,
+                builds the frontend, and deploys everything to <span className="text-bnb-yellow">BNB Chain</span>.
+              </p>
             </div>
           </div>
         </section>
@@ -125,12 +112,11 @@ export default function Home() {
         {/* Stats Bar */}
         <section className="border-t border-b border-bnb-border/50">
           <div className="max-w-[1400px] mx-auto px-6 py-10">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+            <div className="grid grid-cols-3 gap-8">
               {[
                 { value: 'opBNB', label: 'L2 Deployment' },
                 { value: 'Greenfield', label: 'Decentralized Hosting' },
                 { value: 'ECIES', label: 'End-to-End Encryption' },
-                { value: 'Zero', label: 'Wallets for End Users' },
               ].map((stat) => (
                 <div key={stat.label} className="text-center">
                   <div className="text-2xl font-bold text-bnb-light">{stat.value}</div>
