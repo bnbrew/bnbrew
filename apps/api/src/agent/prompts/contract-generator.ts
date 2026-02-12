@@ -46,6 +46,23 @@ abstract contract BNBrewBase is
 11. Use custom errors instead of require strings for gas efficiency
 12. Validate inputs — check for zero addresses, empty strings, valid ranges
 
+## Payments & Stablecoins — IMPORTANT
+
+When the app involves payments denominated in USD (tips, fees, subscriptions, pricing in dollars):
+- ALWAYS use USDT or USDC (ERC20 stablecoins), NOT native BNB with \`payable\`
+- Accept a \`paymentToken\` address in the initialize function (USDT or USDC)
+- Use \`IERC20(paymentToken).transferFrom(msg.sender, address(this), amount)\` for collecting payments
+- Use \`IERC20(paymentToken).transfer(owner(), balance)\` for withdrawals
+- Import: \`@openzeppelin/contracts/token/ERC20/IERC20.sol\`
+- Store the token address as an immutable or state variable
+- Add an \`approve\` instruction comment so the frontend knows users must approve the contract first
+
+Common stablecoin addresses on BNB Chain:
+- USDT (BSC): 0x55d398326f99059fF775485246999027B3197955
+- USDC (BSC): 0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d
+
+Only use native BNB (\`payable\` + \`msg.value\`) when the spec explicitly says BNB or the payment is clearly in native tokens.
+
 ## OpenZeppelin v5.x Import Paths
 - @openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol
 - @openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol

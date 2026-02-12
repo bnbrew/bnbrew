@@ -12,6 +12,23 @@ interface ChatRequest {
 export class ChatController {
   constructor(private readonly chatService: ChatService) {}
 
+  @Post('fix-preview')
+  async fixPreview(
+    @Body() body: { files: Record<string, string>; error: string; errorPath?: string },
+  ) {
+    const fixed = await this.chatService.fixPreviewError(
+      body.files,
+      body.error,
+      body.errorPath,
+    );
+
+    if (!fixed) {
+      return { success: false, error: 'Could not fix the preview' };
+    }
+
+    return { success: true, files: fixed };
+  }
+
   @Post()
   async chat(@Body() body: ChatRequest, @Res() res: Response) {
     res.setHeader('Content-Type', 'text/event-stream');
@@ -27,8 +44,17 @@ export class ChatController {
           onText: (text: string) => {
             res.write(`data: ${JSON.stringify({ type: 'text', content: text })}\n\n`);
           },
-          onPreviewFiles: (files: Record<string, string>) => {
-            res.write(`data: ${JSON.stringify({ type: 'preview_files', files })}\n\n`);
+          onFileStart: (path: string, fileType: 'contract' | 'frontend') => {
+            res.write(`data: ${JSON.stringify({ type: 'file_start', path, fileType })}\n\n`);
+          },
+          onFileDelta: (path: string, content: string) => {
+            res.write(`data: ${JSON.stringify({ type: 'file_delta', path, content })}\n\n`);
+          },
+          onFileComplete: (path: string) => {
+            res.write(`data: ${JSON.stringify({ type: 'file_complete', path })}\n\n`);
+          },
+          onPreviewReady: (files: Record<string, string>) => {
+            res.write(`data: ${JSON.stringify({ type: 'preview_ready', files })}\n\n`);
           },
           onContractFiles: (files: Array<{ name: string; source: string }>) => {
             res.write(`data: ${JSON.stringify({ type: 'contract_files', files })}\n\n`);

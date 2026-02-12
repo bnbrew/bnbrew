@@ -176,9 +176,16 @@ Output ONLY a single JSON code block. No explanation before or after — just th
 8. Use the user's chosen colors in theme.primaryColor
 9. Set darkMode based on user preference (default true)
 
+## Payments & Stablecoins:
+- If the user mentions USD, dollars, tips in dollars, fees in dollars, or any USD-denominated payment → use USDT or USDC (ERC20 stablecoins), NOT native BNB
+- Add a "paymentToken" field to contract functions that handle USD payments
+- Use IERC20 transferFrom pattern for collecting payments
+- Only use native BNB (payable + msg.value) when the user explicitly says BNB or crypto payments without specifying USD
+
 ## Feature detection:
 - Collects user data → "encryption" + "relay", privateBucket: true
-- Involves payments → "wallet-connect"
+- Involves USD payments → "wallet-connect", use stablecoin pattern in contracts
+- Involves BNB/crypto payments → "wallet-connect", use payable pattern
 - Has owner management → "admin-dashboard"
 
 Generate the JSON now based on the conversation.`;

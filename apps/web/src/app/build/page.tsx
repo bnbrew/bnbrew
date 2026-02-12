@@ -30,6 +30,7 @@ function BuildPageInner() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [previewFiles, setPreviewFiles] = useState<Record<string, string>>({});
   const [contractFiles, setContractFiles] = useState<ContractFile[]>([]);
+  const [streamingFiles, setStreamingFiles] = useState<Record<string, string>>({});
   const [isGenerating, setIsGenerating] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string>();
   const sessionIdRef = useRef<string>('');
@@ -64,6 +65,7 @@ function BuildPageInner() {
     setMessages((prev) => [...prev, userMsg]);
     setIsStreaming(true);
     setIsGenerating(true);
+    setStreamingFiles({});
 
     try {
       const response = await fetch('/api/chat', {
@@ -96,12 +98,18 @@ function BuildPageInner() {
       setMessages((prev) => [...prev, assistantMsg]);
 
       const decoder = new TextDecoder();
+      let sseBuffer = '';
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
         const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
+        sseBuffer += chunk;
+
+        // Process complete SSE lines
+        const lines = sseBuffer.split('\n');
+        sseBuffer = lines.pop() || ''; // Keep incomplete last line
 
         for (const line of lines) {
           if (line.startsWith('data: ')) {
@@ -110,17 +118,43 @@ function BuildPageInner() {
 
             try {
               const parsed = JSON.parse(data);
-              if (parsed.type === 'text') {
-                assistantContent += parsed.content;
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === assistantMsg.id ? { ...m, content: assistantContent } : m,
-                  ),
-                );
-              } else if (parsed.type === 'preview_files') {
-                setPreviewFiles(parsed.files);
-              } else if (parsed.type === 'contract_files') {
-                setContractFiles(parsed.files);
+
+              switch (parsed.type) {
+                case 'text':
+                  assistantContent += parsed.content;
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === assistantMsg.id ? { ...m, content: assistantContent } : m,
+                    ),
+                  );
+                  break;
+
+                case 'file_start':
+                  setStreamingFiles((prev) => ({
+                    ...prev,
+                    [parsed.path]: '',
+                  }));
+                  break;
+
+                case 'file_delta':
+                  setStreamingFiles((prev) => ({
+                    ...prev,
+                    [parsed.path]: (prev[parsed.path] || '') + parsed.content,
+                  }));
+                  break;
+
+                case 'file_complete':
+                  // File is done streaming — no action needed, content is already accumulated
+                  break;
+
+                case 'preview_ready':
+                  setPreviewFiles(parsed.files);
+                  setStreamingFiles({});
+                  break;
+
+                case 'contract_files':
+                  setContractFiles(parsed.files);
+                  break;
               }
             } catch {
               // Skip malformed SSE chunks
@@ -188,7 +222,9 @@ function BuildPageInner() {
           <PreviewPanel
             previewFiles={previewFiles}
             contractFiles={contractFiles}
+            streamingFiles={streamingFiles}
             isGenerating={isGenerating}
+            onPreviewFixed={(fixed) => setPreviewFiles(fixed)}
           />
         </div>
       </div>

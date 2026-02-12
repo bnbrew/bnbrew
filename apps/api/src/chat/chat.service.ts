@@ -18,7 +18,10 @@ import { CONTRACT_GENERATOR_SYSTEM_PROMPT } from '../agent/prompts/contract-gene
 
 export interface StreamCallbacks {
   onText: (text: string) => void;
-  onPreviewFiles: (files: Record<string, string>) => void;
+  onFileStart: (path: string, fileType: 'contract' | 'frontend') => void;
+  onFileDelta: (path: string, content: string) => void;
+  onFileComplete: (path: string) => void;
+  onPreviewReady: (files: Record<string, string>) => void;
   onContractFiles: (files: Array<{ name: string; source: string }>) => void;
   onStatus: (status: string, message: string) => void;
   onDone: () => void;
@@ -161,16 +164,16 @@ export class ChatService {
   }
 
   /**
-   * Generation mode — user confirmed, generate AppSpec → contracts → preview
+   * Generation mode — user confirmed, generate AppSpec → contracts + preview in parallel
    */
   private async handleGeneration(
     sessionId: string,
     messages: Array<{ role: string; content: string }>,
     callbacks: StreamCallbacks,
   ): Promise<void> {
-    // Step 1: Generate AppSpec JSON
+    // Step 1: Generate AppSpec JSON (not streaming — it's internal)
     callbacks.onStatus('generating', 'Designing your app...');
-    callbacks.onText("I'm building your app now! Here's what's happening:\n\n");
+    callbacks.onText("I'm building your app now!\n\n");
 
     const appSpec = await this.generateAppSpec(messages);
     if (!appSpec) {
@@ -180,34 +183,29 @@ export class ChatService {
     }
 
     callbacks.onText(`**${appSpec.name}** — ${appSpec.description}\n\n`);
+    callbacks.onStatus('generating', 'Generating code...');
+    callbacks.onText('Generating smart contracts and building your preview in parallel...\n\n');
 
-    // Step 2: Generate contracts
-    callbacks.onStatus('generating', 'Generating smart contracts...');
-    callbacks.onText('Generating smart contracts...\n');
+    // Step 2: Generate contracts + preview IN PARALLEL with streaming
+    const contractPromise = this.generateContractsStreaming(
+      appSpec.contracts || [],
+      callbacks,
+    );
+    const previewPromise = this.generatePreviewStreaming(appSpec, callbacks);
 
-    const contractFiles: Array<{ name: string; source: string }> = [];
-    for (const contractSpec of appSpec.contracts || []) {
-      try {
-        const contract = await this.generateContract(contractSpec);
-        contractFiles.push(contract);
-        callbacks.onText(`- ${contract.name}.sol\n`);
-      } catch (err) {
-        this.logger.error(`Contract generation failed for ${contractSpec.name}: ${err}`);
-        callbacks.onText(`- ${contractSpec.name}.sol (failed)\n`);
-      }
-    }
+    const [contractFiles, previewFiles] = await Promise.all([
+      contractPromise,
+      previewPromise,
+    ]);
 
+    // Step 3: Send final assembled files
     if (contractFiles.length > 0) {
       callbacks.onContractFiles(contractFiles);
     }
 
-    // Step 3: Generate preview files
-    callbacks.onStatus('generating', 'Building your preview...');
-    callbacks.onText('\nBuilding your preview...\n');
-
-    const previewFiles = await this.generatePreview(appSpec);
-    if (previewFiles) {
-      callbacks.onPreviewFiles(previewFiles);
+    if (previewFiles && Object.keys(previewFiles).length > 0) {
+      const sanitized = this.sanitizePreviewFiles(previewFiles);
+      callbacks.onPreviewReady(sanitized);
       callbacks.onText('\nYour app is ready! Check the preview on the right.\n');
       callbacks.onText('You can ask me to make changes — just describe what you want different.\n');
     } else {
@@ -236,6 +234,160 @@ export class ChatService {
     });
 
     callbacks.onDone();
+  }
+
+  /**
+   * Stream-generate all contracts in parallel.
+   * Each contract emits file_start → file_delta → file_complete events.
+   */
+  private async generateContractsStreaming(
+    contracts: any[],
+    callbacks: StreamCallbacks,
+  ): Promise<Array<{ name: string; source: string }>> {
+    if (contracts.length === 0) return [];
+
+    const promises = contracts.map(async (contractSpec) => {
+      const filePath = `contracts/${contractSpec.name}.sol`;
+      callbacks.onFileStart(filePath, 'contract');
+
+      try {
+        const stream = this.anthropic.messages.stream({
+          model: 'claude-sonnet-4-5-20250929',
+          max_tokens: 8192,
+          system: CONTRACT_GENERATOR_SYSTEM_PROMPT,
+          messages: [
+            {
+              role: 'user',
+              content: `Generate a Solidity contract from this ContractSpec:\n\n${JSON.stringify(contractSpec, null, 2)}\n\nOutput ONLY the Solidity source code for ${contractSpec.name}.sol`,
+            },
+          ],
+        });
+
+        let fullSource = '';
+        let lineBuffer = '';
+        let inFence = false;
+
+        stream.on('text', (text) => {
+          fullSource += text;
+          lineBuffer += text;
+
+          // Process complete lines, stripping markdown fences
+          let nlIndex: number;
+          while ((nlIndex = lineBuffer.indexOf('\n')) !== -1) {
+            const line = lineBuffer.substring(0, nlIndex);
+            lineBuffer = lineBuffer.substring(nlIndex + 1);
+
+            // Skip markdown fence markers
+            if (line.trim().startsWith('```')) {
+              inFence = !inFence;
+              continue;
+            }
+
+            callbacks.onFileDelta(filePath, line + '\n');
+          }
+        });
+
+        await stream.finalMessage();
+
+        // Emit remaining buffer
+        if (lineBuffer.trim() && !lineBuffer.trim().startsWith('```')) {
+          callbacks.onFileDelta(filePath, lineBuffer);
+        }
+
+        callbacks.onFileComplete(filePath);
+
+        // Clean source for database
+        let source = fullSource.trim();
+        if (source.startsWith('```')) {
+          source = source.replace(/^```\w*\n/, '').replace(/\n```$/, '');
+        }
+
+        return { name: contractSpec.name, source };
+      } catch (err) {
+        this.logger.error(`Contract generation failed for ${contractSpec.name}: ${err}`);
+        callbacks.onFileComplete(filePath);
+        return null;
+      }
+    });
+
+    const results = await Promise.all(promises);
+    return results.filter((r): r is { name: string; source: string } => r !== null);
+  }
+
+  /**
+   * Stream-generate preview files using ===FILE: /path=== delimited format.
+   * Parses the stream incrementally, emitting file_start → file_delta → file_complete events.
+   */
+  private async generatePreviewStreaming(
+    appSpec: any,
+    callbacks: StreamCallbacks,
+  ): Promise<Record<string, string> | null> {
+    const userPrompt = PREVIEW_GENERATOR_USER_TEMPLATE.replace(
+      '{{appSpec}}',
+      JSON.stringify(appSpec, null, 2),
+    );
+
+    try {
+      const stream = this.anthropic.messages.stream({
+        model: 'claude-sonnet-4-5-20250929',
+        max_tokens: 16384,
+        system: PREVIEW_GENERATOR_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userPrompt }],
+      });
+
+      let lineBuffer = '';
+      let currentPath = '';
+      const collectedFiles: Record<string, string> = {};
+
+      stream.on('text', (text) => {
+        lineBuffer += text;
+
+        // Process all complete lines
+        let nlIndex: number;
+        while ((nlIndex = lineBuffer.indexOf('\n')) !== -1) {
+          const line = lineBuffer.substring(0, nlIndex);
+          lineBuffer = lineBuffer.substring(nlIndex + 1);
+
+          // Check for file marker
+          const markerMatch = line.match(/^===FILE:\s*(.+?)\s*===$/);
+          if (markerMatch) {
+            // Complete previous file
+            if (currentPath) {
+              callbacks.onFileComplete(currentPath);
+            }
+            // Start new file
+            currentPath = markerMatch[1];
+            collectedFiles[currentPath] = '';
+            callbacks.onFileStart(currentPath, 'frontend');
+          } else if (currentPath) {
+            const lineWithNewline = line + '\n';
+            collectedFiles[currentPath] += lineWithNewline;
+            callbacks.onFileDelta(currentPath, lineWithNewline);
+          }
+        }
+      });
+
+      await stream.finalMessage();
+
+      // Handle remaining buffer
+      if (lineBuffer && currentPath) {
+        collectedFiles[currentPath] += lineBuffer;
+        callbacks.onFileDelta(currentPath, lineBuffer);
+      }
+      if (currentPath) {
+        callbacks.onFileComplete(currentPath);
+      }
+
+      if (Object.keys(collectedFiles).length === 0) {
+        this.logger.error('Preview streaming produced no files');
+        return null;
+      }
+
+      return collectedFiles;
+    } catch (err) {
+      this.logger.error(`Preview streaming failed: ${err}`);
+      return null;
+    }
   }
 
   /**
@@ -320,7 +472,8 @@ export class ChatService {
       });
 
       // Send updated files to frontend
-      callbacks.onPreviewFiles(updatedFrontendFiles);
+      const sanitized = this.sanitizePreviewFiles(updatedFrontendFiles);
+      callbacks.onPreviewReady(sanitized);
       if (updatedContractFiles.length > 0) {
         callbacks.onContractFiles(updatedContractFiles);
       }
@@ -374,66 +527,139 @@ export class ChatService {
   }
 
   /**
-   * Generate a single Solidity contract from spec
+   * Sanitize generated preview files to prevent Sandpack crashes.
    */
-  private async generateContract(
-    spec: any,
-  ): Promise<{ name: string; source: string }> {
-    const response = await this.anthropic.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 8192,
-      system: CONTRACT_GENERATOR_SYSTEM_PROMPT,
-      messages: [
-        {
-          role: 'user',
-          content: `Generate a Solidity contract from this ContractSpec:\n\n${JSON.stringify(spec, null, 2)}\n\nOutput ONLY the Solidity source code for ${spec.name}.sol`,
-        },
-      ],
-    });
+  private sanitizePreviewFiles(
+    files: Record<string, string>,
+  ): Record<string, string> {
+    const sanitized: Record<string, string> = {};
 
-    const content = response.content[0];
-    if (content.type !== 'text') {
-      throw new Error('Unexpected response type');
+    for (const [path, content] of Object.entries(files)) {
+      if (typeof content !== 'string') continue;
+
+      let code = content;
+
+      // Remove full lines that import from react-dom/client
+      code = code.replace(
+        /^.*import\s+.*from\s+['"]react-dom(?:\/client)?['"].*$/gm,
+        '',
+      );
+
+      // Remove full lines containing ReactDOM.createRoot / ReactDOM.render
+      code = code.replace(
+        /^.*(?:ReactDOM\.)?(?:createRoot|render)\s*\(.*document.*\).*$/gm,
+        '',
+      );
+
+      // Replace document.getElementById/querySelector calls with null
+      code = code.replace(
+        /document\.(getElementById|querySelector|querySelectorAll)\s*\([^)]*\)/g,
+        'null',
+      );
+
+      // Replace document.createElement calls with null
+      code = code.replace(
+        /document\.createElement\s*\([^)]*\)/g,
+        'null',
+      );
+
+      // Replace document.body / document.head references with null
+      code = code.replace(
+        /document\.(body|head|documentElement)/g,
+        'null',
+      );
+
+      // Replace window.location / window.history with safe values
+      code = code.replace(/window\.location\.href/g, '"/"');
+      code = code.replace(/window\.location/g, '{ href: "/", pathname: "/" }');
+      code = code.replace(
+        /window\.history\.\w+\s*\([^)]*\)/g,
+        'void 0',
+      );
+
+      // Replace localStorage / sessionStorage calls with safe values
+      code = code.replace(
+        /(localStorage|sessionStorage)\.getItem\s*\([^)]*\)/g,
+        'null',
+      );
+      code = code.replace(
+        /(localStorage|sessionStorage)\.setItem\s*\([^)]*\)/g,
+        'void 0',
+      );
+      code = code.replace(
+        /(localStorage|sessionStorage)\.removeItem\s*\([^)]*\)/g,
+        'void 0',
+      );
+
+      sanitized[path] = code;
     }
 
-    let source = content.text.trim();
-    if (source.startsWith('```')) {
-      source = source.replace(/^```\w*\n/, '').replace(/\n```$/, '');
+    // Ensure /App.tsx exists and has a default export
+    if (sanitized['/App.tsx'] && !sanitized['/App.tsx'].includes('export default')) {
+      if (sanitized['/App.tsx'].includes('function App')) {
+        sanitized['/App.tsx'] += '\nexport default App;\n';
+      }
     }
 
-    return { name: spec.name, source };
+    return sanitized;
   }
 
   /**
-   * Generate Sandpack-compatible preview files from AppSpec
+   * Fix a Sandpack preview error by sending the error + files to Claude
    */
-  private async generatePreview(
-    appSpec: any,
+  async fixPreviewError(
+    files: Record<string, string>,
+    error: string,
+    errorPath?: string,
   ): Promise<Record<string, string> | null> {
-    const userPrompt = PREVIEW_GENERATOR_USER_TEMPLATE.replace(
-      '{{appSpec}}',
-      JSON.stringify(appSpec, null, 2),
-    );
+    const fileList = Object.entries(files)
+      .map(([path, content]) => `### ${path}\n\`\`\`\n${content}\n\`\`\``)
+      .join('\n\n');
 
-    const response = await this.anthropic.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 16384,
-      system: PREVIEW_GENERATOR_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userPrompt }],
-    });
+    const prompt = `Fix this Sandpack preview that crashed with a runtime error.
 
-    const content = response.content[0];
-    if (content.type !== 'text') return null;
+## Error
+${error}
+${errorPath ? `File: ${errorPath}` : ''}
 
-    let text = content.text.trim();
-    if (text.startsWith('```')) {
-      text = text.replace(/^```\w*\n/, '').replace(/\n```$/, '');
-    }
+## Current Files
+${fileList}
+
+## Output
+Output ONLY a JSON object where keys are file paths and values are the COMPLETE corrected file contents. Include ALL files, not just changed ones.
+
+Example: { "/App.tsx": "corrected content...", "/styles.css": "..." }
+
+## CRITICAL RULES — these caused the crash, you MUST fix them:
+- NEVER use \`document\`, \`document.getElementById\`, \`document.querySelector\`, \`document.createElement\`, or any DOM API
+- NEVER use \`ReactDOM.createRoot\` or \`ReactDOM.render\` — Sandpack handles mounting
+- NEVER import from \`react-dom\` or \`react-dom/client\`
+- NEVER use \`window.location\`, \`window.history\`, \`localStorage\`, \`sessionStorage\`
+- For scrolling to elements: use \`React.useRef()\` + \`ref.current?.scrollIntoView()\`
+- For DOM measurement: use \`React.useRef()\` + \`useEffect\`
+- For toasts/modals: use React state, NOT portals to document.body
+- Every file path must start with "/"
+- /App.tsx must have \`export default function App()\``;
 
     try {
-      return JSON.parse(text) as Record<string, string>;
-    } catch {
-      this.logger.error('Failed to parse preview files JSON');
+      const response = await this.anthropic.messages.create({
+        model: 'claude-sonnet-4-5-20250929',
+        max_tokens: 16384,
+        messages: [{ role: 'user', content: prompt }],
+      });
+
+      const content = response.content[0];
+      if (content.type !== 'text') return null;
+
+      let text = content.text.trim();
+      if (text.startsWith('```')) {
+        text = text.replace(/^```\w*\n/, '').replace(/\n```$/, '');
+      }
+
+      const fixed = JSON.parse(text) as Record<string, string>;
+      return this.sanitizePreviewFiles(fixed);
+    } catch (err) {
+      this.logger.error(`Fix preview error failed: ${err}`);
       return null;
     }
   }
